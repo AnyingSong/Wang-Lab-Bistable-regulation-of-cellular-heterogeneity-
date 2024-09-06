@@ -1,0 +1,233 @@
+Load necessary R libraries
+library(Seurat)          
+library(dplyr)           
+library(ggplot2)
+library(viridis)
+
+# Define file paths for datasets
+
+s1<- Read10X(data.dir = "E:/project/GSE207707_Deconstructing cold-induced brown adipocyte neogenesis in mice/GSM6310683_C57_RT_Linpos_Rep1")
+s2<- Read10X(data.dir = "E:/project/GSE207707_Deconstructing cold-induced brown adipocyte neogenesis in mice/GSM6310684_C57_RT_Linneg_Rep1")
+s3<- Read10X(data.dir = "E:/project/GSE207707_Deconstructing cold-induced brown adipocyte neogenesis in mice/GSM6310689_C57_RT_Linpos_Rep2")
+s4<- Read10X(data.dir = "E:/project/GSE207707_Deconstructing cold-induced brown adipocyte neogenesis in mice/GSM6310690_C57_RT_Linneg_Rep2")
+s5<- Read10X(data.dir = "E:/project/GSE177635_Brown adipose tissue monocytes support tissue expansion/GSM5378577_BAT CD45+ cells from control mice")
+s6<- Read10X(data.dir = "E:/project/GSE161447_Identification and characterization of distinct brown adipocyte subtypes in C57BL6J mice")
+
+dataS7 <- Read10X(data.dir="E:/project/GSE160585_Vascular smooth muscle-derived TRPV1-expressing progenitors are a new source of cold induced thermogenic adipocytes/", gene.column=1)
+
+orig.ident <- sapply(colnames(dataS7), function(x) unlist(strsplit(x, "\\_"))[2]) 
+table(orig.ident)
+dataS7 <- CreateSeuratObject(counts = dataS7, project = "TRPV1")
+dataS7 <- AddMetaData(object = dataS7, metadata = orig.ident, col.name = 'orig.ident')
+listS7 <- SplitObject(dataS7, split.by = "orig.ident")
+
+# Select RT conditions "3", "4", "11", "12" from dataS7 
+srat_s7 <-listS7$'3'
+srat_s8 <-listS7$'4'
+srat_s9 <-listS7$'11'
+srat_s10 <-listS7$'12'
+
+srat_s1   <- CreateSeuratObject(s1,project = "s1")
+srat_s2   <- CreateSeuratObject(s2,project = "s2")
+srat_s3   <- CreateSeuratObject(s3,project = "s3")
+srat_s4   <- CreateSeuratObject(s4,project = "s4")
+srat_s5   <- CreateSeuratObject(s5,project = "s5")
+srat_s6   <- CreateSeuratObject(s6,project = "s6")
+
+BATsvf_list <- list()
+BATsvf_list[["BATsvf1"]] <- srat_s1
+BATsvf_list[["BATsvf2"]] <- srat_s2
+BATsvf_list[["BATsvf3"]] <- srat_s3
+BATsvf_list[["BATsvf4"]] <- srat_s4
+BATsvf_list[["BATsvf5"]] <- srat_s5
+BATsvf_list[["BATsvf6"]] <- srat_s6
+BATsvf_list[["BATsvf7"]] <- srat_s7
+BATsvf_list[["BATsvf8"]] <- srat_s8
+BATsvf_list[["BATsvf9"]] <- srat_s9
+BATsvf_list[["BATsvf10"]] <- srat_s10
+
+# Ensure unique cell names by adding a dataset-specific prefix
+for (i in seq_along(BATsvf_list)) {
+  # Get the Seurat object from the list
+seurat_obj <- BATsvf_list[[i]]
+  
+# Create new cell names with the prefix, ensuring no extra prefixes are added
+ current_prefix <- names(BATsvf_list)[i]
+  original_names <- colnames(seurat_obj)
+  
+# Check if the prefix already exists in the cell names
+if (any(grepl(paste0("^", current_prefix, "_"), original_names))) {
+    # Remove existing prefixes
+    fixed_names <- gsub(paste0("^", current_prefix, "_"), "", original_names)
+  } else {
+    # Use original names directly if prefix is not found
+    fixed_names <- original_names
+  }
+  
+# Add new prefix to ensure uniqueness
+  new_names <- paste(current_prefix, fixed_names, sep = "_")
+  
+# Rename cells in the Seurat object
+  BATsvf_list[[i]] <- RenameCells(
+    seurat_obj, 
+    new.names = new_names
+  )
+}
+
+# Normalize and find variable features with vst
+for (i in seq_along(BATsvf_list)) {
+  BATsvf_list[[i]] <- NormalizeData(BATsvf_list[[i]], verbose = FALSE)
+  BATsvf_list[[i]] <- FindVariableFeatures(BATsvf_list[[i]], selection.method = "vst", nfeatures = 2000, verbose = FALSE)
+}
+
+# Select integration features
+features <- SelectIntegrationFeatures(object.list = BATsvf_list)
+
+# Scale data for each Seurat object
+for (i in seq_along(BATsvf_list)) {
+  BATsvf_list[[i]] <- ScaleData(BATsvf_list[[i]], features = features, verbose = FALSE)
+}
+
+# Run PCA for each Seurat object
+for (i in seq_along(BATsvf_list)) {
+  BATsvf_list[[i]] <- RunPCA(BATsvf_list[[i]], features = features, verbose = FALSE)
+}
+
+# Find integration anchors
+anchors <- FindIntegrationAnchors(object.list = BATsvf_list, anchor.features = features)
+
+# Integrate data
+BATsvf_integrated <- IntegrateData(anchorset = anchors)
+
+# Set the default assay to the integrated assay
+DefaultAssay(BATsvf_integrated) <- "integrated"
+
+# Calculate mitochondrial gene percentage
+mito.genes <- grep(pattern = "^MT-", ignore.case = TRUE, x = rownames(BATsvf_integrated@assays[["RNA"]]@data), value = TRUE)
+percent.mito <- Matrix::colSums(BATsvf_integrated@assays[["RNA"]]@data[mito.genes, ]) / Matrix::colSums(BATsvf_integrated@assays[["RNA"]]@data)
+
+# Add mitochondrial percentage to metadata
+BATsvf_integrated <- AddMetaData(object = BATsvf_integrated, metadata = percent.mito, col.name = "percent.mito")
+
+# Update factor levels in orig.ident
+new_ident_levels <- c("s7" = "3", "s8" = "4", "s9" = "11", "s10" = "12")
+BATsvf_integrated$orig.ident <- factor(BATsvf_integrated$orig.ident,
+                                       levels = c("s1", "s2", "s3", "s4", "s5", "s6", "3", "4", "11", "12"),
+                                       labels = c("s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10"))
+
+# Verify the new levels
+levels(BATsvf_integrated$orig.ident)
+
+# Generate violin plots with updated labels
+VlnPlot(BATsvf_integrated, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"),
+        group.by = "orig.ident", cols = rainbow(length(levels(BATsvf_integrated$orig.ident))),
+        pt.size = 0.01, ncol = 3)
+
+# Filter out cells based on QC metrics
+BATsvf_integrated <- subset(BATsvf_integrated, subset = nFeature_RNA > 200 & nFeature_RNA < 6000 & nCount_RNA > 700 & nCount_RNA < 20000 & percent.mito < 0.1)
+
+# Plot filtered QC metrics
+VlnPlot(BATsvf_integrated, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"),
+        group.by = "orig.ident", cols = rainbow(length(levels(BATsvf_integrated$orig.ident))),
+        pt.size = 0.01, ncol = 3)
+
+# Scale data and run PCA
+BATsvf_integrated <- ScaleData(BATsvf_integrated, verbose = FALSE)
+BATsvf_integrated <- RunPCA(BATsvf_integrated, npcs = 30, verbose = FALSE)
+
+# Find neighbors and clusters
+BATsvf_integrated <- FindNeighbors(BATsvf_integrated, reduction = "pca", dims = 1:20)
+BATsvf_integrated <- FindClusters(BATsvf_integrated, resolution = 1)
+
+# Run t-SNE and UMAP
+BATsvf_integrated <- RunTSNE(BATsvf_integrated, dims = 1:20, do.fast = TRUE)
+
+DimPlot(BATsvf_integrated, reduction = "tsne", group.by = "orig.ident", label = TRUE, repel = TRUE)
+
+# Feature plots
+VlnPlot(BATsvf_integrated, features = c("Pdgfra", "Ptprc", "Hba-a1", "Pecam1", "Acta2", "Col3a1", "Pdgfrb", "Mpz", "Ucp1"))
+
+# Renamed clusters based on cell types
+BATsvf_integrated1 <- RenameIdents(BATsvf_integrated, 
+                                   '0' = "Immune Cells", '1' = "Immune Cells", '2' = "Stromal Cells", 
+                                   '3' = "Immune Cells", '4' = "Immune Cells", '5' = "Smooth Muscle Cells", '6' = "Endothelial Cells", 
+                                   '7' = "Stromal Cells", '8' = "Immune Cells", '9' = "Immune Cells", 
+                                   '10' = "Stromal Cells", '11' = "Smooth Muscle Cells", '12' = "Immune Cells", '13' = "Stromal Cells",
+                                   '14' = "Endothelial Cells", '15' = "Immune Cells", 
+                                   '16' = "Immune Cells", '17' = "Immune Cells", '18' = "Smooth Muscle Cells", 
+                                   '19' = "Pericytes", '20' = "Immune Cells", '21' = "Smooth Muscle Cells", 
+                                   '22' = "Endothelial Cells",'23' = "Immune Cells",'24' = "Immune Cells",
+                                   '25' = "Erythrocytes",'26' = "Immune Cells",'27' = "Immune Cells",'28' = "Stromal Cells"
+                                   ,'29' = "Schwann Cells",'30' = "Immune Cells",'31' = "Endothelial Cells",'32' = "Schwann Cells"
+                                   ,'33' = "Immune Cells",'34' = "Erythrocytes",'35' = "Stromal Cells",'36' = "Erythrocytes"
+                                   ,'37' = "Endothelial Cells",'38' = "Smooth Muscle Cells",'39' = "Immune Cells", '40' = "Immune Cells")
+
+DimPlot(BATsvf_integrated1, reduction = "tsne", pt.size = 0.2, label.size = 6) +  labs(title = "BAT SVFs")
+
+ggsave("BAT SVFs.tsne.png",width =11, height = 8, dpi= 600)
+
+p1 <- FeaturePlot(BATsvf_integrated1, features = c("Ptprc","Adrb1", "Adrb2", "Adrb3"), pt.size = 0.1, reduction = "tsne", combine = FALSE)
+
+# Define Color Scales for Each Gene with gray to blue and specific limits
+scales <- list(
+  Ptprc = scale_color_gradient(low = "#D3D3D3", high = "blue", limits = c(0, 3), oob = scales::squish),
+  Adrb1 = scale_color_gradient(low = "#D3D3D3", high = "blue", limits = c(0, 3), oob = scales::squish),
+  Adrb2 = scale_color_gradient(low = "#D3D3D3", high = "blue", limits = c(0, 3), oob = scales::squish),
+  Adrb3 = scale_color_gradient(low = "#D3D3D3", high = "blue", limits = c(0, 3), oob = scales::squish)
+)
+
+# Apply Color Scales to Corresponding Plots
+features <- c("Ptprc","Adrb1", "Adrb2", "Adrb3")
+p2 <- mapply(function(plot, feature) plot + scales[[feature]], p1, features, SIMPLIFY = FALSE)
+
+combined_plot2 <- CombinePlots(p2)  # Assuming CombinePlots function returns a ggplot object
+
+# Set theme to ensure white background
+combined_plot2 <- combined_plot2 + theme(
+  plot.background = element_rect(fill = "white", color = NA)
+)
+
+# Save the plot with a white background
+ggsave("Adrb_expression.tsne.png", plot = combined_plot2, width = 10, height = 8, dpi = 600)
+
+# select CD45+ immune cells for further analysis
+
+sub_obj <- subset(BATsvf_integrated1, idents = "Immune Cells")
+
+sub_obj <- ScaleData(sub_obj, verbose = FALSE)
+sub_obj <- RunPCA(sub_obj, npcs = 30, verbose = FALSE)
+sub_obj <- FindNeighbors(sub_obj, reduction = "pca", dims = 1:20)
+sub_obj <- FindClusters(sub_obj, resolution = 0.5)
+sub_obj <- RunTSNE(object = sub_obj, dims = 1:20, do.fast =TRUE, do.Label =TRUE)
+
+# Find markers 
+sub_obj.markers <- FindAllMarkers(object = sub_obj, only.pos = TRUE, min.pct = 0.2, logfc.threshold = 0.2) 
+
+# Extract top 10 markers for each cluster 
+top7 <- sub_obj.markers %>%  group_by(cluster) %>% top_n(7, avg_log2FC) 
+
+# Generate a heatmap and assign to a variable
+heatmap_plot <- DoHeatmap(object = sub_obj, features = top7$gene, label = TRUE)
+
+ggsave("DoHeatmap.png", plot = heatmap_plot, width = 20, height = 15, dpi = 600)
+
+# Renamed clusters based on cell types
+BAT_immune <- RenameIdents(sub_obj, 
+                                   '0' = "B cell", '1' = "B cell", '2' = "CD4+ T cell", 
+                                   '3' = "Regulatory T cell", '4' = "CD8+ cell", '5' = "NK cell", '6' = "Pro-inflammatory Macrophage", 
+                                   '7' = "Pro-inflammatory Macrophage", '8' = "Neutrophil", '9' = "Dendritic cell", 
+                                   '10' = "Ly6C-hi Monocyte", '11' = "Ly6C-lo Monocyte", '12' = "Anti-inflammatory Macrophage", '13' = "ILC2",
+                                   '14' = "Proliferative T cell", '15' = "NA", 
+                                   '16' = "NA", '17' = "Ly6C-lo Monocyte",'18' = "B cell", '19' = "NK cell")
+
+DimPlot(BAT_immune, reduction = "tsne", pt.size = 0.2, label.size = 6) +  labs(title = "BAT_immune")
+
+ggsave("BAT_immune.tsne.png",width =11, height = 8, dpi= 600)
+
+library(viridis)
+pal <- turbo (n =8, begin =0, end = 1, direction = 1)
+plot3 <- FeaturePlot(BAT_immune, features = c("Itgam","Adgre1","Il1b","S100a8"), reduction = "tsne", min.cutoff ='q10', cols = pal)
+
+ggsave("IL1b expression pattern.png", plot = plot3, width = 10, height = 8, dpi = 600)
+
+
