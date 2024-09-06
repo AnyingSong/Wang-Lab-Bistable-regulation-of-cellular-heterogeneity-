@@ -1,0 +1,307 @@
+# Load necessary R libraries
+library(ggplot2)      
+library(dplyr)        
+library(Matrix)        
+library(Seurat)       
+library(readr)        
+library(cowplot)       
+library(RColorBrewer)  
+iibrary(enrichplot)  
+library(clusterProfiler)  
+library(org.Mm.eg.db)  
+library(tidyr)  
+library(ggtext)  
+library(patchwork)  
+
+# Load the CSV file and skip the first column, which contains gene names.
+GSM3567479_processed_data <- read.csv("D:/project/low and high/GSM3567479_processed_data.csv", header = TRUE)
+
+# Check the dimensions of the dataset to confirm it loaded correctly (rows: genes, columns: cells + metadata).
+dim(GSM3567479_processed_data)
+
+# Set the first column (gene names) as row names and remove it from the dataframe.
+
+rownames(GSM3567479_processed_data) <- GSM3567479_processed_data[, 1]
+GSM3567479_processed_data <- GSM3567479_processed_data[, -1]
+
+# Check the dimensions again after removing the first column to verify the modification.
+dim(GSM3567479_processed_data)
+
+# Display column and row names for verification
+head(colnames(GSM3567479_processed_data))
+head(row.names(GSM3567479_processed_data))
+
+# Create a Seurat object using the processed data, assigning a project name for clarity.
+seurat_obj <- CreateSeuratObject(counts = GSM3567479_processed_data, project = "Project_Name")
+
+# Check the dimensions of the Seurat object to verify the data was correctly loaded.
+dim(seurat_obj)
+
+# Verify column and row names in the Seurat object (checking if genes and cells were loaded correctly).
+head(colnames(seurat_obj))
+head(rownames(seurat_obj))
+
+# Identify mitochondrial genes using the "^mt-" pattern and calculate the percentage of mitochondrial gene expression per cell.
+mito.genes <- grep(pattern = "^mt-", ignore.case=TRUE, x = rownames(seurat_obj@assays[["RNA"]]), value = TRUE)
+percent.mito <- Matrix::colSums(seurat_obj@assays[["RNA"]][mito.genes, ])/Matrix::colSums(seurat_obj@assays[["RNA"]])
+
+# Print the list of identified mitochondrial genes for inspection.
+print(mito.genes)
+
+# Add mitochondrial percentage as metadata to the Seurat object, allowing it to be used in visualizations or filtering.
+seurat_obj <- AddMetaData(object = seurat_obj, metadata = percent.mito, col.name = "percent.mito") 
+
+# Create violin plots for nFeature_RNA (number of detected genes), nCount_RNA (total number of transcripts), and percent.mito (mitochondrial percentage).
+col.num <- length(levels(as.factor(seurat_obj@meta.data$orig.ident)))  # Number of colors needed
+VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), cols = rainbow(col.num), pt.size = 0.01, ncol = 3) 
+
+# Apply quality control by filtering cells with nFeature_RNA > 100 and percent.mito < 0.5.
+seurat_obj <- subset(seurat_obj, subset = nFeature_RNA > 100 & percent.mito < 0.5)
+
+# Visualize the quality control results again using violin plots to confirm that filtering was effective.
+VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), cols = rainbow(col.num), pt.size = 0.1, ncol = 3) + 
+  theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())  # Remove x-axis labels for cleaner look
+
+# Identify variable features, which are genes that show high variation across cells and are important for downstream analysis
+seurat_obj <- FindVariableFeatures(object = seurat_obj, mean.function = ExpMean, dispersion.function = LogVMR, mean.cutoff = c(0.1, 8), dispersion.cutoff = c(1, Inf), num.bin=20, nfeatures = 2000)
+
+# Scale the data to standardize gene expression values across cells, which is crucial for PCA and clustering.
+seurat_obj <- ScaleData(object = seurat_obj, verbose = FALSE)
+
+# Perform PCA for dimensionality reduction using the top variable features.
+seurat_obj <- RunPCA(object = seurat_obj, npcs = 30, verbose = FALSE)
+
+# Find the nearest neighbors of cells based on PCA dimensions and group cells into clusters.
+seurat_obj <- FindNeighbors(seurat_obj, reduction = "pca", dims = 1:20)
+seurat_obj <- FindClusters(seurat_obj, resolution = 2.0, algorithm = 1)  # Adjust resolution for desired clustering granularity.
+seurat_obj <- RunTSNE(object = seurat_obj, dims = 1:20, do.fast = TRUE, do.Label = TRUE)
+
+Plot1 <- DimPlot(object = seurat_obj, reduction = "tsne")
+Plot1 
+
+# Create violin plots for specific genes to assess their expression across clusters.
+VlnPlot(object = seurat_obj, features = c("Plin1", "Ucp1", "Retn", "Pecam1", "Ptprc", "Pdgfra"))
+
+# Subset the Seurat object to exclude specific clusters (e.g., clusters 0, 3, 7, etc.), depending on your analysis needs.
+sub_obj1 <- subset(seurat_obj, idents = c(0,3,7,8,9,11,13,15,14,16), invert = TRUE)
+
+# Re-run PCA, clustering, and t-SNE on the subsetted object for further analysis.
+sub_obj1 <- ScaleData(sub_obj1, verbose = FALSE)
+sub_obj1 <- RunPCA(sub_obj1, npcs = 30, verbose = FALSE)
+sub_obj1 <- FindNeighbors(sub_obj1, reduction = "pca", dims = 1:20)
+sub_obj1 <- FindClusters(sub_obj1, resolution = 2)
+sub_obj1 <- RunTSNE(object = sub_obj1, dims = 1:20, do.fast = TRUE, do.Label = TRUE)
+
+# Create violin plots for the subsetted object to explore gene expression in specific clusters.
+VlnPlot(object = sub_obj1, features = c("Plin1", "Ucp1", "Retn", "Car3"))
+
+# Rename clusters in the subsetted object (e.g., reassign clusters with biological meanings like "BA-Ls", "BA-Hs", and "WAT").
+rename_object <- RenameIdents(object = sub_obj1, '0' = "WAT", '1' = "BA-Ls", '2' = "BA-Ls", '3' = "BA-Ls", '4' = "WAT", '5' = "BA-Ls", '6' = "BA-Hs", '7' = "BA-Hs", '8' = "BA-Hs", '9' = "BA-Hs")
+
+# Plot the t-SNE with cluster labels and save the plot for documentation purposes.
+DimPlot(object = rename_object, reduction = "tsne", pt.size = 0.2, label.size = 6, label = TRUE) + NoLegend()
+
+# Perform differential expression analysis between BA-Ls and BA-Hs clusters.
+deg_results_BA_Ls_vs_BA_Hs <- FindMarkers(object = rename_object, ident.1 = "BA-Ls", ident.2 = "BA-Hs", logfc.threshold = 0.25, min.pct = 0.25)
+
+# Extract the top 50 upregulated DEGs (differentially expressed genes) for both BA-Ls and BA-Hs.
+upregulated_DEGs_BA_Ls <- head(deg_results_BA_Ls_vs_BA_Hs[deg_results_BA_Ls_vs_BA_Hs$avg_log2FC > 0, ], 50)
+upregulated_DEGs_BA_Hs <- head(deg_results_BA_Ls_vs_BA_Hs[deg_results_BA_Ls_vs_BA_Hs$avg_log2FC < 0, ], 50)
+
+# Manually adjust specific genes between the two lists based on heatmap results.
+genes_to_move_to_BA_Ls <- c("Pdk4", "Steap4")
+genes_to_move_to_BA_Hs <- c("Uqcr11", "Nop10")
+
+# Update the lists accordingly by moving the genes to the appropriate groups.
+top50_upregulated_DEGs_BA_Ls <- rbind(upregulated_DEGs_BA_Ls, deg_results_BA_Ls_vs_BA_Hs[rownames(deg_results_BA_Ls_vs_BA_Hs) %in% genes_to_move_to_BA_Ls, ])
+top50_upregulated_DEGs_BA_Hs <- rbind(upregulated_DEGs_BA_Hs, deg_results_BA_Ls_vs_BA_Hs[rownames(deg_results_BA_Ls_vs_BA_Hs) %in% genes_to_move_to_BA_Hs, ])
+
+# Create a list of genes for heatmap visualization.
+genes_for_heatmap <- unique(c(rownames(top50_upregulated_DEGs_BA_Ls), rownames(top50_upregulated_DEGs_BA_Hs), "S100a1", "Stat3", "Jmjd1c", "Klf9", "Egr1", "Zfp36"))
+
+# Subset the object to include only BA-Ls and BA-Hs clusters for the heatmap visualization.
+heatmap_data <- subset(rename_object, idents = c("BA-Ls", "BA-Hs"))
+
+# Scale and normalize the data, ensuring all necessary genes are included in the heatmap.
+genes_to_include_in_scaling <- unique(c(rownames(heatmap_data), genes_for_heatmap))
+heatmap_data <- ScaleData(heatmap_data, features = genes_to_include_in_scaling)
+heatmap_data <- NormalizeData(heatmap_data)
+
+# Create a custom color palette for the heatmap.
+my_palette <- colorRampPalette(c("purple", "black", "yellow"))(100)
+
+# Generate the heatmap and apply custom formatting for the axis and legend.
+heatmap <- DoHeatmap(heatmap_data, features = genes_for_heatmap) + 
+  scale_fill_gradientn(colors = my_palette, limits = c(-2, 2)) + 
+  theme(
+    legend.position = "right",
+    axis.text.y = element_text(size = 7, angle = 0, hjust = 1, color = "black", face = "plain"),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    panel.background = element_blank(),
+    plot.margin = unit(c(1, 1, 1, 3), "cm")
+  )
+
+# Display and save the heatmap as a PNG file.
+print(heatmap)
+ggsave("heatmap_updated.png", plot = heatmap, width = 12, height = 10, units = "in", dpi = 600)
+
+# Create violin plots for a subset of thermogenic and glucocorticoid receptor signaling-relate genes and apply custom formatting.
+subset_obj1 <- subset(rename_object, idents = c("BA-Ls", "BA-Hs"))
+vln_plots <- VlnPlot(object = subset_obj1, features = c("Ucp1", "Cox6b1", "H6pd", "Rgs2", "Zfp36", "Lpin1", "Sdc4", "Txnip"), combine = FALSE)
+vln_plots <- lapply(vln_plots, function(plot) {
+  plot + theme(axis.text.x = element_text(face = "italic", angle = 45, hjust = 1, vjust = 1), axis.title.x = element_blank())
+})
+
+# Combine the violin plots into a single plot for easier interpretation and save it as a PNG file.
+combined_plot <- plot_grid(plotlist = vln_plots, align = 'v', ncol = 2)
+print(combined_plot)
+ggsave("final_italic_vln_plot.png", plot = combined_plot, width = 8, height = 10, bg = "white", dpi = 600)
+
+
+# Perform Differential Expression Analysis for BA-Hs vs. BA-Ls clusters and choose top 75 gene for pathway analysis.
+# Identifies genes differentially expressed between the two clusters, using a log fold-change threshold of 0.25 and requiring at least 25% of cells to express the gene.
+deg_results_BA_Hs_vs_BA_Ls <- FindMarkers(
+  object = rename_object,  # Seurat object containing the labeled clusters.
+  ident.1 = "BA-Hs",       # Identifying the first cluster (BA-Hs).
+  ident.2 = "BA-Ls",       # Identifying the second cluster (BA-Ls).
+  logfc.threshold = 0.25,  # Minimum log fold change of 0.25 to consider a gene as differentially expressed.
+  min.pct = 0.25           # Require a gene to be expressed in at least 25% of cells in either cluster.
+)
+
+# Select the top 100 upregulated genes for BA-Hs if there are any significant results.
+if (nrow(deg_results_BA_Hs_vs_BA_Ls) > 0) {
+  upregulated_DEGs_BA_Hs <- deg_results_BA_Hs_vs_BA_Ls[deg_results_BA_Hs_vs_BA_Ls$avg_log2FC > 0, ]  # Filter genes with positive log2 fold-change (upregulated in BA-Hs).
+  # Sort the upregulated genes by adjusted p-value and select the top 100 most significant ones.
+  top100_upregulated_DEGs_BA_Hs <- head(upregulated_DEGs_BA_Hs[order(upregulated_DEGs_BA_Hs$p_val_adj), ], 100)
+}
+
+# Perform the same differential expression analysis, but in the opposite direction (BA-Ls vs BA-Hs).
+deg_results_BA_Ls_vs_BA_Hs <- FindMarkers(
+  object = rename_object, 
+  ident.1 = "BA-Ls",       # This time, BA-Ls is set as the first cluster.
+  ident.2 = "BA-Hs", 
+  logfc.threshold = 0.25, 
+  min.pct = 0.25
+)
+
+# Select the top 100 upregulated genes for BA-Ls if there are any significant results.
+if (nrow(deg_results_BA_Ls_vs_BA_Hs) > 0) {
+  upregulated_DEGs_BA_Ls <- deg_results_BA_Ls_vs_BA_Hs[deg_results_BA_Ls_vs_BA_Hs$avg_log2FC > 0, ]  # Filter genes with positive log2 fold-change (upregulated in BA-Ls).
+  # Sort the upregulated genes by adjusted p-value and select the top 100 most significant ones.
+  top100_upregulated_DEGs_BA_Ls <- head(upregulated_DEGs_BA_Ls[order(upregulated_DEGs_BA_Ls$p_val_adj), ], 100)
+}
+
+# Manually adjust the gene lists based on visual inspection of a heatmap or other criteria.
+
+genes_to_move_to_BA_Ls <- c("Pdk4", "Steap4", "Ifrd1", "Klf6", "Hspa5")  # Genes to move from BA-Hs list to BA-Ls list, as these gene are enriched in BA-Ls, based on the heatmap.
+genes_to_move_to_BA_Hs <- c("Uqcr11", "Nop10")  # Genes to move from BA-Ls list to BA-Hs list, as these gene are enriched in BA-Hs, based on the heatmap.
+
+# Remove the selected genes from their current lists (BA-Ls and BA-Hs).
+top100_upregulated_DEGs_BA_Ls <- top100_upregulated_DEGs_BA_Ls[!rownames(top100_upregulated_DEGs_BA_Ls) %in% genes_to_move_to_BA_Hs, ]  
+top100_upregulated_DEGs_BA_Hs <- top100_upregulated_DEGs_BA_Hs[!rownames(top100_upregulated_DEGs_BA_Hs) %in% genes_to_move_to_BA_Ls, ]  
+
+# Append the genes that are being moved to the correct gene lists after removal from their previous lists.
+top100_upregulated_DEGs_BA_Ls <- rbind(top100_upregulated_DEGs_BA_Ls, deg_results_BA_Ls_vs_BA_Hs[rownames(deg_results_BA_Ls_vs_BA_Hs) %in% genes_to_move_to_BA_Ls, ])
+top100_upregulated_DEGs_BA_Hs <- rbind(top100_upregulated_DEGs_BA_Hs, deg_results_BA_Hs_vs_BA_Ls[rownames(deg_results_BA_Hs_vs_BA_Ls) %in% genes_to_move_to_BA_Hs, ])
+
+# Print the updated lists of the top 100 upregulated genes for both BA-Ls and BA-Hs clusters and choose the list of top 75 upregulated genes for pathway analysis.
+
+print(top100_upregulated_DEGs_BA_Ls)
+print(top100_upregulated_DEGs_BA_Hs)
+
+
+# choose the list of top 75 downregulated genes for BA-Hs cluster and used for pathway analysis
+upregulated_BA_Ls <- c(
+  "Tiparp", "Mt2", "Sdc4", "Zfp36", "Rhob", "Egr1", "Mt1", "Klf9", "Fam13a", "Trib1",
+  "Hp", "Zfp36l1", "Ier5", "Cdkn1a", "Ptp4a1", "Irs2", "Gdap10", "Errfi1", "Pfkfb3", "Glul",
+  "H6pd", "Jmjd1c", "Stat3", "Tead1", "Eef1a1", "Hmox1", "Lpin1", "Txnip", "Nfkbia", "Noct",
+  "Junb", "Nrip1", "Btg1", "Slc38a2", "Rgs2", "Gsn", "Slc39a14", "Zfp36l2", "Slc1a3", "Malat1",
+  "Lrrc58", "Lrrc8a", "Hipk1", "Zbtb20", "Pde4b", "Myo1b", "Tpt1", "Arid5b", "Nfil3", "Fkbp5",
+  "Garre1", "Acsl1", "Neat1", "Csrnp1", "Sowahc", "Car3", "Pck1", "Ddx3x", "Fosl2", "Ccnl1",
+  "Plin4", "Ccn1", "Cebpb", "Rpl32", "Rps5", "Myc", "Adamts1", "Irf2bp2", "Rps2", "Rps23", "Foxo1",
+  "Sgk1", "Sav1", "Fosb", "Fermt2"
+)
+
+# choose the list of top 75 downregulated genes for BA-Ls cluster and used for pathway analysis
+downregulated_BA_Ls <- c(
+  "Dbi", "Ndufa4", "Cox6b1", "Uqcrb", "Cycs", "Atp5j2", "Ndufa12", "Etfb", 
+  "Ifi27", "Ndufa11", "Ndufb2", "Cox8b", "Cox7a2", "Ndufa1", "Cox7b", "Atp5l", "Cox6c", "Ndufa5", 
+  "Cox7a1", "Cox6a1", "Uqcr10", "S100a1", "Micos10", "Acadvl", "Ndufb6", "Atp5k", "Fabp4", 
+  "Ndufb3", "Cox5b", "Uqcrc1", "Ndufc2", "Slirp", "Uqcrq", "Higd1a", "Fmc1", "Sdhb", 
+  "Cox5a", "Eci1", "Ndufa9", "Ndufs7", "Suclg1", "Ucp1", "Idh3g", "Decr1", "Ech1", "Tspo", 
+  "Micos13", "Ndufs8", "Ddt", "Acaa2", "Ndufb8", "Atox1", "Ndufc1", "Uqcrh", "Cox7c", "Plaat3", 
+  "Ndufab1", "Ndufv1", "S100a11", "Ndufb7", "Mrpl42", "Mdh1", "Gm10053", "Ndufs4", "Rbx1", 
+  "S100a13", "Ndufb11", "Cst3", "Acot13", "Psma6", "Psmb3", "Hspa1a", "Pet100", "Romo1", "Tmem14c"
+)
+
+# Convert gene symbols to ENTREZ IDs for upregulated genes
+entrez_ids_Ls <- bitr(upregulated_BA_Ls, fromType="SYMBOL", toType="ENTREZID", OrgDb=org.Mm.eg.db)
+
+# Convert gene symbols to ENTREZ IDs for downregulated genes
+entrez_ids_down <- bitr(downregulated_BA_Ls, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+entrez_ids_up <- bitr(upregulated_BA_Ls, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Mm.eg.db)
+
+# Perform pathway enrichment analysis using Gene Ontology (Biological Process) for downregulated and upregulated genes
+ego_BP_down <- enrichGO(gene = entrez_ids_down$ENTREZID, OrgDb = org.Mm.eg.db, keyType = "ENTREZID", ont = "BP")
+ego_BP_up <- enrichGO(gene = entrez_ids_up$ENTREZID, OrgDb = org.Mm.eg.db, keyType = "ENTREZID", ont = "BP")
+
+# Convert the enrichment results to data frames and add a "Direction" column to indicate regulation
+ego_BP_down_df <- as.data.frame(ego_BP_down)
+ego_BP_down_df$Direction <- "Downregulated"
+ego_BP_up_df <- as.data.frame(ego_BP_up)
+ego_BP_up_df$Direction <- "Upregulated"
+
+# Select the top 20 pathways based on adjusted p-values for upregulated and downregulated genes
+top_downregulated_df <- ego_BP_down_df %>%
+  slice_min(order_by = p.adjust, n = 20)
+top_upregulated_df <- ego_BP_up_df %>%
+  slice_min(order_by = p.adjust, n = 20)
+
+# Combine the results from upregulated and downregulated pathways into one data frame
+combined_results <- bind_rows(
+  mutate(top_downregulated_df, Direction = "Downregulated"),
+  mutate(top_upregulated_df, Direction = "Upregulated")
+)
+
+# Convert GeneRatio from a fraction string to a numeric value for plotting
+combined_results <- combined_results %>%
+  separate(GeneRatio, into = c("numerator", "denominator"), sep = "/") %>%
+  mutate(GeneRatio = as.numeric(numerator) / as.numeric(denominator))
+
+# Ensure Direction is a factor and order the levels for proper facet display
+combined_results$Direction <- factor(combined_results$Direction, levels = c("Upregulated", "Downregulated"))
+
+# Highlight specific pathways (glucocorticoid and corticosteroid responses) by making them red and bold
+highlighted_pathways <- c("response to glucocorticoid", "response to corticosteroid", 
+                          "cellular response to glucocorticoid stimulus", "cellular response to corticosteroid stimulus")
+
+# Apply the highlight formatting to the Description column
+combined_results <- combined_results %>%
+  mutate(Description = ifelse(Description %in% highlighted_pathways, 
+                              paste0("<span style='color:red; font-weight:bold;'>", Description, "</span>"), 
+                              Description))
+
+# Create a combined plot showing both upregulated and downregulated pathways
+p_combined <- ggplot(combined_results, aes(x = GeneRatio, y = reorder(Description, GeneRatio), 
+                                           size = GeneRatio, color = p.adjust)) +
+  geom_point(alpha = 0.6) +  # Plot points for each pathway
+  scale_color_gradient(low = "green", high = "red") +  # Color scale based on adjusted p-values
+  scale_size(range = c(3, 12)) +  # Size scale based on GeneRatio
+  facet_wrap(~Direction, scales = "free_y", ncol = 2) +  # Facet by Direction (up/downregulated)
+  labs(title = "Pathway Enrichment Analysis for BA-Ls", x = "Gene Ratio", y = NULL) +  # Title and axis labels
+  theme_minimal() +  # Use a clean theme
+  theme(
+    strip.text = element_text(size = 15),  # Increase facet label text size
+    axis.text.x = element_text(size = 12, hjust = 1),  # Customize x-axis text
+    axis.text.y = ggtext::element_markdown(size = 12),  # Allow markdown formatting for y-axis labels
+    plot.title = element_text(size = 20, face = "bold"),  # Bold plot title
+    axis.title = element_text(size = 14)  # Customize axis title text
+  )
+
+# Display the plot
+print(p_combined)
+
+# Save the plot as a PNG file
+ggsave("pathway_enrichment_analysis_BA-Ls.png", p_combined, width = 14, height = 8)
+
