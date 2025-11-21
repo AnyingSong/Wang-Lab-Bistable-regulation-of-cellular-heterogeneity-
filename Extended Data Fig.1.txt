@@ -4,7 +4,8 @@ library(dplyr)
 library(Matrix)        
 library(Seurat)       
 library(readr)        
-library(cowplot)       
+library(cowplot)
+library(scales)
 library(RColorBrewer)  
 library(enrichplot)   
 library(clusterProfiler)  
@@ -16,7 +17,7 @@ library(pheatmap)
 library(gridExtra)    
 
 
-# Load the CSV file and skip the first column.
+# Load the CSV file.
 GSM3567479_processed_data <- read.csv("D:/project directory/GSM3567479_processed_data.csv", header = TRUE)
 
 # Check the dimensions of the dataset.
@@ -71,10 +72,10 @@ seurat_obj <- RunPCA(object = seurat_obj, npcs = 30, verbose = FALSE)
 seurat_obj <- FindNeighbors(seurat_obj, reduction = "pca", dims = 1:20)
 seurat_obj <- FindClusters(seurat_obj, resolution = 2.0, algorithm = 1)
 
-# Perform t-SNE for visualization of clusters.
-seurat_obj <- RunTSNE(object = seurat_obj, dims = 1:20, do.fast = TRUE, do.Label = TRUE)
-Plot1 <- DimPlot(object = seurat_obj, reduction = "tsne")
-Plot1  # Visualize the t-SNE plot to inspect clusters.
+# Perform umap for visualization of clusters.
+seurat_obj <- RunUMAP(object = seurat_obj, dims = 1:20, do.fast = TRUE, do.Label = TRUE)
+Plot1 <- DimPlot(object = seurat_obj, reduction = "umap")
+Plot1
 
 # Create violin plots for specific genes (markers of adipocytes, endothelial cells, immune cells, and stromal cells).
 VlnPlot(object = seurat_obj, features = c("Plin1", "Ucp1", "Pecam1", "Ptprc", "Pdgfra"))
@@ -82,12 +83,12 @@ VlnPlot(object = seurat_obj, features = c("Plin1", "Ucp1", "Pecam1", "Ptprc", "P
 # Subset the Seurat object to exclude non-adipocyte clusters.
 sub_obj1 <- subset(seurat_obj, idents = c(0,3,7,8,9,11,13,15,14,16), invert = TRUE)
 
-# Re-run PCA, clustering, and t-SNE.
+# Re-run PCA, clustering, and UMAP.
 sub_obj1 <- ScaleData(sub_obj1, verbose = FALSE)
 sub_obj1 <- RunPCA(sub_obj1, npcs = 30, verbose = FALSE)
 sub_obj1 <- FindNeighbors(sub_obj1, reduction = "pca", dims = 1:20)
 sub_obj1 <- FindClusters(sub_obj1, resolution = 2)
-sub_obj1 <- RunTSNE(object = sub_obj1, dims = 1:20, do.fast = TRUE, do.Label = TRUE)
+sub_obj1 <- RunUMAP(object = sub_obj1, dims = 1:20, do.fast = TRUE, do.Label = TRUE)
 
 # Create violin plots for the subsetted object to explore gene expression in WAT, BA-Ls, and BA-Hs clusters.
 VlnPlot(object = sub_obj1, features = c("Plin1", "Ucp1", "Retn", "Car3"))
@@ -95,8 +96,75 @@ VlnPlot(object = sub_obj1, features = c("Plin1", "Ucp1", "Retn", "Car3"))
 # Rename clusters in the subsetted object.
 rename_object <- RenameIdents(object = sub_obj1, '0' = "WAT", '1' = "BA-Ls", '2' = "BA-Ls", '3' = "BA-Ls", '4' = "WAT", '5' = "BA-Ls", '6' = "BA-Hs", '7' = "BA-Hs", '8' = "BA-Hs", '9' = "BA-Hs")
 
-# Plot the t-SNE with cluster labels.
-DimPlot(object = rename_object, reduction = "tsne", pt.size = 0.2, label.size = 6, label = TRUE) + NoLegend()
+# Plot the UMAP with cluster labels.
+P1 <- DimPlot(object = rename_object, reduction = "umap", pt.size = 0.2, label.size = 6, label = TRUE) + NoLegend()
+ggsave("UMAP_clusters.png, p1, width =4, height =3, dpi =300, bg ="white")
+
+# Plot of gene expression.
+genes <- c("Ucp1","Cox6b1","H6pd","Nr3c1","Rgs2","Txnip")
+blue_pal <- c("grey90","#fee5d9","#fcae91","#de2d26","#a50f15")
+gene_max <- c(Ucp1 = 60, Cox6b1 = 60, H6pd = 3, Nr3c1 = 3, Rgs2 = 12, Txnip = 25)
+genes <- intersect(genes, rownames(rename_object))
+
+plist <- FeaturePlot(rename_object, features = genes, reduction = "umap",
+                     slot = "data", order = TRUE, pt.size = 0.2, combine = FALSE)
+plist <- lapply(seq_along(genes), function(i){
+  g <- genes[i]
+  vmax <- gene_max[[g]]
+  plist[[i]] +
+    scale_color_gradientn(colors = blue_pal,
+                          limits = c(0, vmax), oob = squish, na.value = "grey90") +
+    theme(panel.grid = element_blank(),
+          plot.title = element_text(face = "bold"))
+})
+p2 <- wrap_plots(plist, ncol = 3)
+p2
+ggsave("feature_umap_per_gene.png", p2, width = 12, height = 6, dpi = 600, bg = "white")
+
+# Subset to only BA-Ls and BA-Hs
+adip_sub <- subset(rename_object, idents = c("BA-Ls","BA-Hs"))
+Idents(adip_sub) <- factor(Idents(adip_sub), levels = c("BA-Ls","BA-Hs"))
+genes <- c("Ucp1","Cox6b1","H6pd","Nr3c1","Rgs2","Txnip")
+pal   <- c("BA-Ls"="#E76F51","BA-Hs"="#2A9D8F")
+plist <- lapply(genes, function(g)
+  VlnPlot(adip_sub, features=g, pt.size=0.6, cols=pal, combine=FALSE)[[1]] +
+    labs(x=NULL,y="Expression Level", title=g) +
+    theme_minimal(base_size=12) +
+    theme(plot.title=element_text(face="bold",hjust=.5,size=16),
+          axis.text.x=element_text(angle=45,hjust=1,vjust=1),
+          panel.grid.major.x=element_blank(),
+          legend.title=element_blank())
+)
+
+(wrap_plots(plist, ncol=2) + plot_layout(guides="collect")) &
+  theme(legend.position="right")
+
+p_grid <- (wrap_plots(plist, ncol = 2) + plot_layout(guides = "collect")) &
+  theme(legend.position = "right")
+ggsave("BA_Ls_vs_BA_Hs_violin_grid.png", p_grid, width = 10, height = 12, dpi = 600, bg = "white")
+
+# Raw-count violin plots for six genes (BA-Ls vs BA-Hs)
+DefaultAssay(adip_sub) <- "RNA"
+Idents(adip_sub) <- factor(Idents(adip_sub), levels = c("BA-Ls", "BA-Hs"))
+genes <- c("Ucp1","Cox6b1","H6pd","Nr3c1","Rgs2","Txnip")
+pal <- c("BA-Ls"="#E76F51","BA-Hs"="#2A9D8F")
+
+library(patchwork)
+plist <- lapply(genes, function(g)
+  VlnPlot(adip_sub, features=g, assay="RNA", slot="counts",
+          pt.size=0.3, cols=pal, combine=FALSE)[[1]] +
+    labs(x=NULL, y="Raw UMI counts", title=g) +
+    theme_minimal(base_size=12) +
+    theme(plot.title=element_text(face="bold",hjust=.5),
+          axis.text.x=element_text(angle=45,hjust=1,vjust=1),
+          panel.grid.major.x=element_blank(),
+          legend.title=element_blank())
+)
+p <- (wrap_plots(plist, ncol=2) + plot_layout(guides="collect")) &
+  theme(legend.position="right")
+p
+ggsave("BA_Ls_vs_BA_Hs_violin_RAW_COUNTS.png", p,
+       width=10, height=12, dpi=600, bg="white")
 
 # Perform differential expression analysis between BA-Ls and BA-Hs clusters.
 deg_results_BA_Ls_vs_BA_Hs <- FindMarkers(object = rename_object, ident.1 = "BA-Ls", ident.2 = "BA-Hs", logfc.threshold = 0.25, min.pct = 0.25)
@@ -338,4 +406,5 @@ p_combined <- ggplot(combined_results, aes(x = GeneRatio, y = reorder(Descriptio
 
 print(p_combined)
 ggsave("pathway_enrichment_analysis_BA-Ls.png", p_combined, width = 14, height = 8)
+
 
