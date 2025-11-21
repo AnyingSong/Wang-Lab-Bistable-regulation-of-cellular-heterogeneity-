@@ -226,8 +226,9 @@ ggsave("BAT_immune.tsne.png",width =11, height = 8, dpi= 600)
 
 library(viridis)
 pal <- turbo (n =8, begin =0, end = 1, direction = 1)
-plot3 <- FeaturePlot(BAT_immune, features = c("Itgam","Adgre1","Il1b","S100a8"), reduction = "tsne", min.cutoff ='q10', cols = pal)
+plot3 <- FeaturePlot(BAT_immune, features = c("Il1b","Ptprc","Cd19",""Cd3e,"Itgam","Lyz2","Adgre1","Mrc1","Ly6g","Csf3r","Cxcr2","Ly6c1), reduction = "tsne", min.cutoff ='q10', cols = pal)
 
 ggsave("IL1b expression pattern.png", plot = plot3, width = 10, height = 8, dpi = 600)
+
 
 
