@@ -45,7 +45,7 @@ dim(seurat_obj)
 mito.genes <- grep(pattern = "^mt-", ignore.case=TRUE, x = rownames(seurat_obj@assays[["RNA"]]), value = TRUE)
 percent.mito <- Matrix::colSums(seurat_obj@assays[["RNA"]][mito.genes, ])/Matrix::colSums(seurat_obj@assays[["RNA"]])
 
-# Add mitochondrial percentage as metadata to the Seurat object, allowing it to be used in visualizations or filtering.
+# Add mitochondrial percentage as metadata to the Seurat object.
 seurat_obj <- AddMetaData(object = seurat_obj, metadata = percent.mito, col.name = "percent.mito") 
 
 # Create violin plots for nFeature_RNA (number of detected genes), nCount_RNA (total number of transcripts), and percent.mito (mitochondrial percentage).
@@ -55,7 +55,7 @@ VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), 
 # Apply quality control by filtering cells with nFeature_RNA > 100 and percent.mito < 0.5.
 seurat_obj <- subset(seurat_obj, subset = nFeature_RNA > 100 & percent.mito < 0.5)
 
-# Visualize the quality control results again using violin plots to confirm that filtering was effective.
+# Visualize the quality.
 VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mito"), cols = rainbow(col.num), pt.size = 0.1, ncol = 3) + 
   theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())  # Remove x-axis labels for cleaner look
 
@@ -232,10 +232,10 @@ top_heatmap <- DoHeatmap(
 ) + 
   scale_fill_gradientn(colors = my_palette, limits = c(-2, 2)) + 
   theme(
-    legend.position = "none",  # No legend for the top plot
+    legend.position = "none",  
     axis.text.y = element_text(size = 12), 
-    axis.text.x = element_blank(),  # Remove x-axis labels
-    axis.ticks.x = element_blank(),  # Remove x-axis ticks
+    axis.text.x = element_blank(),  
+    axis.ticks.x = element_blank(),  
     plot.margin = unit(c(0, 0, 0, 0), "cm")
   )
 
@@ -247,10 +247,10 @@ bottom_heatmap <- DoHeatmap(
 ) + 
   scale_fill_gradientn(colors = my_palette, limits = c(-2, 2)) + 
   theme(
-    legend.position = "right",  # Show legend
+    legend.position = "right",  
     axis.text.y = element_text(size = 12), 
-    axis.text.x = element_blank(),  # Remove x-axis labels
-    axis.ticks.x = element_blank(),  # Remove x-axis ticks
+    axis.text.x = element_blank(),  
+    axis.ticks.x = element_blank(),  
     plot.margin = unit(c(0, 0, 0, 0), "cm")
   )
 
@@ -269,24 +269,24 @@ ggsave("heatmap-thermogenic and glucocorticoid signal.png", plot = combined_heat
 # Perform Differential Expression Analysis for BA-Hs vs. BA-Ls clusters.
 # Identifies genes differentially expressed between the two clusters, using a log fold-change threshold of 0.25 and requiring at least 25% of cells to express the gene.
 deg_results_BA_Hs_vs_BA_Ls <- FindMarkers(
-  object = rename_object,  # Seurat object containing the labeled clusters.
-  ident.1 = "BA-Hs",       # Identifying the first cluster (BA-Hs).
-  ident.2 = "BA-Ls",       # Identifying the second cluster (BA-Ls).
-  logfc.threshold = 0.25,  # Minimum log fold change of 0.25 to consider a gene as differentially expressed.
-  min.pct = 0.25           # Require a gene to be expressed in at least 25% of cells in either cluster.
+  object = rename_object,  
+  ident.1 = "BA-Hs",      
+  ident.2 = "BA-Ls",      
+  logfc.threshold = 0.25, 
+  min.pct = 0.25           
 )
 
 # Select the top 100 upregulated genes for BA-Hs if there are any significant results.
 if (nrow(deg_results_BA_Hs_vs_BA_Ls) > 0) {
-  upregulated_DEGs_BA_Hs <- deg_results_BA_Hs_vs_BA_Ls[deg_results_BA_Hs_vs_BA_Ls$avg_log2FC > 0, ]  # Filter genes with positive log2 fold-change (upregulated in BA-Hs).
-  # Sort the upregulated genes by adjusted p-value and select the top 100 most significant ones.
+  upregulated_DEGs_BA_Hs <- deg_results_BA_Hs_vs_BA_Ls[deg_results_BA_Hs_vs_BA_Ls$avg_log2FC > 0, ]  
+ 
   top100_upregulated_DEGs_BA_Hs <- head(upregulated_DEGs_BA_Hs[order(upregulated_DEGs_BA_Hs$p_val_adj), ], 100)
 }
 
 # Perform the same differential expression analysis, but in the opposite direction (BA-Ls vs BA-Hs).
 deg_results_BA_Ls_vs_BA_Hs <- FindMarkers(
   object = rename_object, 
-  ident.1 = "BA-Ls",       # This time, BA-Ls is set as the first cluster.
+  ident.1 = "BA-Ls",       
   ident.2 = "BA-Hs", 
   logfc.threshold = 0.25, 
   min.pct = 0.25
@@ -299,16 +299,15 @@ if (nrow(deg_results_BA_Ls_vs_BA_Hs) > 0) {
   top100_upregulated_DEGs_BA_Ls <- head(upregulated_DEGs_BA_Ls[order(upregulated_DEGs_BA_Ls$p_val_adj), ], 100)
 }
 
-# Manually adjust the gene lists based on visual inspection of a heatmap.
-# Move specific genes from one list to the other based on your biological or visual observations.
-genes_to_move_to_BA_Ls <- c("Pdk4", "Steap4", "Ifrd1", "Klf6", "Hspa5")  # Genes to move from BA-Hs list to BA-Ls list.
-genes_to_move_to_BA_Hs <- c("Uqcr11", "Nop10")  # Genes to move from BA-Ls list to BA-Hs list.
+# Correct the gene lists based on visual inspection of a heatmap.
+genes_to_move_to_BA_Ls <- c("Pdk4", "Steap4", "Ifrd1", "Klf6", "Hspa5")  
+genes_to_move_to_BA_Hs <- c("Uqcr11", "Nop10") 
 
-# Remove the selected genes from their current lists (BA-Ls and BA-Hs).
-top100_upregulated_DEGs_BA_Ls <- top100_upregulated_DEGs_BA_Ls[!rownames(top100_upregulated_DEGs_BA_Ls) %in% genes_to_move_to_BA_Hs, ]  # Remove genes that should be moved to BA-Hs.
-top100_upregulated_DEGs_BA_Hs <- top100_upregulated_DEGs_BA_Hs[!rownames(top100_upregulated_DEGs_BA_Hs) %in% genes_to_move_to_BA_Ls, ]  # Remove genes that should be moved to BA-Ls.
+# update the selected genes from their current lists (BA-Ls and BA-Hs).
+top100_upregulated_DEGs_BA_Ls <- top100_upregulated_DEGs_BA_Ls[!rownames(top100_upregulated_DEGs_BA_Ls) %in% genes_to_move_to_BA_Hs, ]  
+top100_upregulated_DEGs_BA_Hs <- top100_upregulated_DEGs_BA_Hs[!rownames(top100_upregulated_DEGs_BA_Hs) %in% genes_to_move_to_BA_Ls, ]  
 
-# Add the genes to their new lists.
+# update the genes to their new lists.
 # Append the genes that are being moved to the correct gene lists after removal from their previous lists.
 top100_upregulated_DEGs_BA_Ls <- rbind(top100_upregulated_DEGs_BA_Ls, deg_results_BA_Ls_vs_BA_Hs[rownames(deg_results_BA_Ls_vs_BA_Hs) %in% genes_to_move_to_BA_Ls, ])
 top100_upregulated_DEGs_BA_Hs <- rbind(top100_upregulated_DEGs_BA_Hs, deg_results_BA_Hs_vs_BA_Ls[rownames(deg_results_BA_Hs_vs_BA_Ls) %in% genes_to_move_to_BA_Hs, ])
@@ -390,18 +389,18 @@ combined_results <- combined_results %>%
 # Create a combined plot showing both upregulated and downregulated pathways.
 p_combined <- ggplot(combined_results, aes(x = GeneRatio, y = reorder(Description, GeneRatio), 
                                            size = GeneRatio, color = p.adjust)) +
-  geom_point(alpha = 0.6) +  # Plot points for each pathway
-  scale_color_gradient(low = "green", high = "red") +  # Color scale based on adjusted p-values
+  geom_point(alpha = 0.6) +  
+  scale_color_gradient(low = "green", high = "red") +  
   scale_size(range = c(3, 12)) +  # Size scale based on GeneRatio
-  facet_wrap(~Direction, scales = "free_y", ncol = 2) +  # Facet by Direction (up/downregulated)
+  facet_wrap(~Direction, scales = "free_y", ncol = 2) +  
   labs(title = "Pathway Enrichment Analysis for BA-Ls", x = "Gene Ratio", y = NULL) +  # Title and axis labels
   theme_minimal() +  # Use a clean theme
   theme(
-    strip.text = element_text(size = 15),  # Increase facet label text size
-    axis.text.x = element_text(size = 12, hjust = 1),  # Customize x-axis text
-    axis.text.y = ggtext::element_markdown(size = 12),  # Allow markdown formatting for y-axis labels
-    plot.title = element_text(size = 20, face = "bold"),  # Bold plot title
-    axis.title = element_text(size = 14)  # Customize axis title text
+    strip.text = element_text(size = 15),  
+    axis.text.x = element_text(size = 12, hjust = 1),  
+    axis.text.y = ggtext::element_markdown(size = 12),  
+    plot.title = element_text(size = 20, face = "bold"),  
+    axis.title = element_text(size = 14)  
   )
 
 print(p_combined)
