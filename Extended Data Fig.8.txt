@@ -139,7 +139,7 @@ BATsvf_integrated <- RunPCA(BATsvf_integrated, npcs = 30, verbose = FALSE)
 BATsvf_integrated <- FindNeighbors(BATsvf_integrated, reduction = "pca", dims = 1:20)
 BATsvf_integrated <- FindClusters(BATsvf_integrated, resolution = 1)
 
-# Run t-SNE and UMAP
+# Run t-SNE
 BATsvf_integrated <- RunTSNE(BATsvf_integrated, dims = 1:20, do.fast = TRUE)
 
 DimPlot(BATsvf_integrated, reduction = "tsne", group.by = "orig.ident", label = TRUE, repel = TRUE)
@@ -168,7 +168,6 @@ ggsave("BAT SVFs.tsne.png",width =11, height = 8, dpi= 600)
 
 p1 <- FeaturePlot(BATsvf_integrated1, features = c("Ptprc","Adrb1", "Adrb2", "Adrb3"), pt.size = 0.1, reduction = "tsne", combine = FALSE)
 
-# Define Color Scales for Each Gene with gray to blue and specific limits
 scales <- list(
   Ptprc = scale_color_gradient(low = "#D3D3D3", high = "blue", limits = c(0, 3), oob = scales::squish),
   Adrb1 = scale_color_gradient(low = "#D3D3D3", high = "blue", limits = c(0, 3), oob = scales::squish),
@@ -176,18 +175,15 @@ scales <- list(
   Adrb3 = scale_color_gradient(low = "#D3D3D3", high = "blue", limits = c(0, 3), oob = scales::squish)
 )
 
-# Apply Color Scales to Corresponding Plots
 features <- c("Ptprc","Adrb1", "Adrb2", "Adrb3")
 p2 <- mapply(function(plot, feature) plot + scales[[feature]], p1, features, SIMPLIFY = FALSE)
 
 combined_plot2 <- CombinePlots(p2)  # Assuming CombinePlots function returns a ggplot object
 
-# Set theme to ensure white background
 combined_plot2 <- combined_plot2 + theme(
   plot.background = element_rect(fill = "white", color = NA)
 )
 
-# Save the plot with a white background
 ggsave("Adrb_expression.tsne.png", plot = combined_plot2, width = 10, height = 8, dpi = 600)
 
 # select CD45+ immune cells for further analysis
@@ -226,9 +222,77 @@ ggsave("BAT_immune.tsne.png",width =11, height = 8, dpi= 600)
 
 library(viridis)
 pal <- turbo (n =8, begin =0, end = 1, direction = 1)
-plot3 <- FeaturePlot(BAT_immune, features = c("Il1b","Ptprc","Cd19",""Cd3e,"Itgam","Lyz2","Adgre1","Mrc1","Ly6g","Csf3r","Cxcr2","Ly6c1), reduction = "tsne", min.cutoff ='q10', cols = pal)
+plot3 <- FeaturePlot(BAT_immune, features = c("Il1b","Ptprc","Cd19","Cd3e","Itgam","Lyz2","Adgre1","Mrc1","Ly6g","Csf3r","Cxcr2","Ly6c1"), reduction = "tsne", min.cutoff ='q10', cols = pal)
 
 ggsave("IL1b expression pattern.png", plot = plot3, width = 10, height = 8, dpi = 600)
 
+# Adrenergic receptor expression in BAT immune cells
 
+DefaultAssay(BAT_immune) <- "RNA"
+
+pal <- turbo(
+  n = 8,
+  alpha = 1,
+  begin = 0,
+  end = 1,
+  direction = 1
+)
+
+# Gene list
+genes4 <- c(
+  "Adra1a", "Adra1b", "Adra1d",
+  "Adra2a", "Adra2b", "Adra2c",
+  "Adrb1", "Adrb2", "Adrb3"
+)
+
+# FeaturePlot
+plot4 <- FeaturePlot(
+  object = BAT_immune,
+  features = genes4,
+  reduction = "tsne",
+  cols = pal,
+  pt.size = 0.1,
+  combine = FALSE,
+  order = TRUE
+)
+
+# Theme
+plot4_theme <- Map(function(p, gene) {
+
+  p +
+    ggtitle(gene) +
+    theme_minimal(base_size = 12) +
+    theme(
+      panel.background = element_rect(fill = "white", colour = NA),
+      plot.background = element_rect(fill = "white", colour = NA),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.line = element_line(colour = "black", linewidth = 0.3),
+      axis.ticks = element_line(colour = "black", linewidth = 0.3),
+      plot.title = element_text(
+        hjust = 0.5,
+        face = "bold",
+        size = 14
+      )
+    )
+
+}, plot4, genes4)
+
+# Combine
+combined_plot4 <-
+  wrap_plots(plot4_theme, ncol = 3) +
+  plot_layout(guides = "collect") &
+  theme(
+    legend.position = "right"
+  )
+
+combined_plot4
+
+ggsave(
+  "Adrenergic_receptor_expression_pattern.png",
+  plot = combined_plot4,
+  width = 12,
+  height = 10,
+  dpi = 600
+)
 
